@@ -1,0 +1,171 @@
+from datetime import UTC, datetime
+
+import pytest
+
+from release import promote
+
+NOW = datetime(2026, 8, 12, tzinfo=UTC)
+
+# The real state of cBioPortal/cbioportal on 2026-08-12: three pre-releases
+# outstanding, the oldest overdue by weeks.
+RELEASES = [
+    {"tag_name": "v7.0.5", "draft": False, "prerelease": True,
+     "published_at": "2026-07-09T12:03:03Z", "html_url": "u/v7.0.5"},
+    {"tag_name": "v7.0.4", "draft": False, "prerelease": True,
+     "published_at": "2026-07-01T02:38:02Z", "html_url": "u/v7.0.4"},
+    {"tag_name": "v7.0.3", "draft": False, "prerelease": True,
+     "published_at": "2026-06-18T15:43:02Z", "html_url": "u/v7.0.3"},
+    {"tag_name": "v7.0.2", "draft": False, "prerelease": False,
+     "published_at": "2026-06-10T15:17:11Z", "html_url": "u/v7.0.2"},
+    {"tag_name": "v7.1.0-rc.1", "draft": False, "prerelease": True,
+     "published_at": "2026-01-01T00:00:00Z", "html_url": "u/rc"},
+    {"tag_name": "v9.9.9", "draft": True, "prerelease": True,
+     "published_at": "2026-01-01T00:00:00Z", "html_url": "u/draft"},
+]
+
+COMPOSE_ENV = """# Docker images
+DOCKER_IMAGE_CBIOPORTAL=cbioportal/cbioportal:7.0.2
+DOCKER_IMAGE_SESSION_SERVICE=cbioportal/session-service:0.6.4
+"""
+
+CHART_YAML = """apiVersion: v2
+name: cbioportal
+version: 1.1.0
+appVersion: "6.4.1"
+"""
+
+VALUES_YAML = """container:
+  image: cbioportal/cbioportal:6.4.1-web-shenandoah
+  cmd: "java"
+"""
+
+
+class FakeGitHub:
+    def __init__(self):
+        self.files = {
+            ".env": COMPOSE_ENV,
+            "charts/cbioportal/Chart.yaml": CHART_YAML,
+            "charts/cbioportal/values.yaml": VALUES_YAML,
+        }
+        self.written = {}
+        self.pulls = []
+        self.refs = set()
+        self.updated_releases = []
+
+    def releases(self, repo):
+        return RELEASES
+
+    def release_by_tag(self, repo, tag):
+        found = next((r for r in RELEASES if r["tag_name"] == tag), None)
+        return {**found, "id": 7} if found else None
+
+    def update_release(self, repo, release_id, **fields):
+        self.updated_releases.append((repo, fields))
+        return {}
+
+    def file_contents(self, repo, path, ref="HEAD"):
+        return self.files.get(path)
+
+    def branch_sha(self, repo, base):
+        return "deadbeef"
+
+    def ref_sha(self, repo, ref):
+        return "deadbeef" if ref in self.refs else None
+
+    def create_ref(self, repo, ref, sha):
+        self.refs.add(ref.replace("refs/", ""))
+        return {}
+
+    def put_file(self, repo, path, content, message, branch):
+        self.written[(repo, path)] = content
+        return {}
+
+    def find_pull(self, repo, branch, base):
+        return None
+
+    def create_pull(self, repo, head, base, title, body):
+        pull = {"repo": repo, "title": title, "html_url": f"https://github.com/{repo}/pull/1"}
+        self.pulls.append(pull)
+        return pull
+
+
+def test_due_finds_overdue_prereleases(config):
+    due = promote.due(FakeGitHub(), config, now=NOW)
+    tags = [d["tag"] for d in due]
+    # All three outstanding pre-releases are past the 30-day window as of NOW.
+    assert tags == ["v7.0.3", "v7.0.4", "v7.0.5"]
+
+
+def test_due_excludes_official_drafts_and_rcs(config):
+    tags = [d["tag"] for d in promote.due(FakeGitHub(), config, now=NOW)]
+    assert "v7.0.2" not in tags  # already official
+    assert "v9.9.9" not in tags  # still a draft
+    assert "v7.1.0-rc.1" not in tags  # not a vX.Y.Z release tag
+
+
+def test_due_excludes_prereleases_inside_the_window(config):
+    # v7.0.5 is 34 days old at NOW... check the boundary explicitly instead.
+    due = promote.due(FakeGitHub(), config, now=datetime(2026, 7, 20, tzinfo=UTC))
+    assert [d["tag"] for d in due] == ["v7.0.3"]
+
+
+def test_due_reports_age(config):
+    oldest = promote.due(FakeGitHub(), config, now=NOW)[0]
+    assert oldest["age_days"] == 54
+
+
+def test_flip_marks_both_repos_official(config):
+    gh = FakeGitHub()
+    promote.flip(gh, config, "v7.0.3", dry_run=False)
+    assert len(gh.updated_releases) == 2
+    assert all(fields["prerelease"] is False for _, fields in gh.updated_releases)
+
+
+def test_flip_skips_an_already_official_release(config):
+    gh = FakeGitHub()
+    promote.flip(gh, config, "v7.0.2", dry_run=False)
+    assert gh.updated_releases == []
+
+
+def test_bump_downstream_rewrites_all_three_files(config):
+    gh = FakeGitHub()
+    promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)
+    written = {path: content for (_, path), content in gh.written.items()}
+    assert "cbioportal/cbioportal:7.0.6" in written[".env"]
+    assert 'appVersion: "7.0.6"' in written["charts/cbioportal/Chart.yaml"]
+    assert (
+        "image: cbioportal/cbioportal:7.0.6-web-shenandoah"
+        in written["charts/cbioportal/values.yaml"]
+    )
+
+
+def test_bump_downstream_strips_the_v_prefix(config):
+    gh = FakeGitHub()
+    promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)
+    assert "cbioportal:v7.0.6" not in gh.written[(config["repos"]["compose"], ".env")]
+
+
+def test_bump_downstream_opens_one_pr_per_repo(config):
+    gh = FakeGitHub()
+    promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)
+    assert len(gh.pulls) == 2
+
+
+def test_bump_downstream_is_a_noop_when_already_current(config):
+    gh = FakeGitHub()
+    promote.bump_downstream(gh, config, "v7.0.2", dry_run=False)
+    # .env is already on 7.0.2, so only the helm repo should move.
+    assert [p["repo"] for p in gh.pulls] == [config["repos"]["helm"]]
+
+
+def test_bump_downstream_fails_loudly_if_a_pattern_stops_matching(config):
+    gh = FakeGitHub()
+    gh.files[".env"] = "# someone restructured this file\n"
+    with pytest.raises(promote.PromotionError, match="matched nothing"):
+        promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)
+
+
+def test_bump_downstream_writes_nothing_on_a_dry_run(config):
+    gh = FakeGitHub()
+    promote.bump_downstream(gh, config, "v7.0.6", dry_run=True)
+    assert gh.written == {} and gh.pulls == []

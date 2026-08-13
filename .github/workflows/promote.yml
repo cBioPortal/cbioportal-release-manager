@@ -1,0 +1,52 @@
+name: Promote
+
+# Two things, deliberately separate. The nightly scan only ever opens an issue:
+# "it ran in production for a month with no major issues" is a judgement call, not
+# a cron job. The manual dispatch does the actual promotion once that call is made.
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release to promote to official, e.g. v7.0.3. Leave blank to only scan."
+        type: string
+        default: ""
+      dry_run:
+        type: boolean
+        default: false
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup
+        id: setup
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Flip to official and bump the community artifacts
+        if: inputs.version != ''
+        run: uv run release promote --version "${{ inputs.version }}" $DRY_RUN
+        env:
+          GITHUB_TOKEN: ${{ steps.setup.outputs.token }}
+
+      - name: Flag anything overdue
+        if: always()
+        run: uv run release promote-scan $DRY_RUN
+        env:
+          GITHUB_TOKEN: ${{ steps.setup.outputs.token }}
+          RELEASE_ASSIGNEE: ${{ vars.RELEASE_ASSIGNEE }}

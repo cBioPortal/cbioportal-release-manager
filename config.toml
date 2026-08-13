@@ -1,0 +1,67 @@
+# Everything environment-specific lives here so the code carries no magic strings.
+
+[repos]
+frontend = "cBioPortal/cbioportal-frontend"
+backend = "cBioPortal/cbioportal"
+self = "cBioPortal/cbioportal-release-manager"
+helm = "cBioPortal/cbioportal-helm"
+compose = "cBioPortal/cbioportal-docker-compose"
+
+[branches]
+frontend = "master"
+backend = "master"
+
+# Checks that must be green on the pinned SHA before a release starts.
+#
+# Deliberately an allowlist, not "everything green". As of 2026-08-12 the combined
+# status of BOTH masters is `failure` -- sonarcloud and GitBook on the backend,
+# Dependabot on the frontend, e2e_localdb on both -- so requiring everything would
+# mean no release could ever be cut. Names cover GitHub check-runs and CircleCI
+# commit statuses alike; both are queried.
+#
+# NOTE: ci/circleci: e2e_localdb_shards and e2e_localdb_merge are red on both
+# masters today, so they are omitted. If those are meant to gate a release, fix
+# them and add them here.
+[required_checks]
+frontend = [
+    "ci/circleci: typecheck",
+    "ci/circleci: build_frontend",
+    "ci/circleci: unit_tests_main",
+    "ci/circleci: unit_tests_packages",
+]
+backend = [
+    "Setup and Test",
+    "Sanity Check",
+    "spotless-check",
+    "ci/circleci: run_api_tests",
+    "ci/circleci: build_frontend",
+]
+
+[maven]
+base = "https://repo1.maven.org/maven2"
+group_path = "io/github/cbioportal"
+frontend_artifact = "frontend-cbioportal"
+backend_artifact = "cbioportal"
+
+[docker]
+image = "cbioportal/cbioportal"
+# Tags dockerimage.yml publishes for a release tag; every one must exist.
+tag_suffixes = ["", "-web-shenandoah"]
+platforms = ["linux/amd64", "linux/arm64"]
+
+[pom]
+# The property in the backend pom that pins the frontend package.
+frontend_version_property = "frontend.version"
+
+[timeouts]
+# Maven Central publication is slow; these mirror the existing workflow's 30x60s.
+maven_attempts = 30
+maven_interval_seconds = 60
+docker_attempts = 30
+docker_interval_seconds = 60
+checks_attempts = 60
+checks_interval_seconds = 30
+
+[promotion]
+# A pre-release older than this is due for promotion to official.
+age_days = 30

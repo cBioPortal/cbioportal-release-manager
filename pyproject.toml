@@ -1,0 +1,37 @@
+[project]
+name = "cbioportal-release-manager"
+version = "0.1.0"
+description = "Orchestrates the weekly cBioPortal release across cbioportal and cbioportal-frontend."
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.32",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+release = "release.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "responses>=0.25",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/release"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+# Pinned explicitly: ruff's implicit defaults vary between versions, and a dev
+# whose ruff disagrees with CI's is a bad first experience of the repo.
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "ISC"]

@@ -1,0 +1,36 @@
+name: Release toolchain
+description: uv plus a short-lived GitHub App token for the repos a release touches.
+
+inputs:
+  app-id:
+    required: true
+  private-key:
+    required: true
+
+outputs:
+  token:
+    description: Installation token, valid for this job only.
+    value: ${{ steps.token.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      with:
+        enable-cache: true
+    - run: uv sync --frozen
+      shell: bash
+    # A per-job installation token, rather than the long-lived SSH deploy key the
+    # frontend workflow uses today to push straight to backend master.
+    - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+      id: token
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: cBioPortal
+        repositories: >-
+          cbioportal,
+          cbioportal-frontend,
+          cbioportal-release-manager,
+          cbioportal-helm,
+          cbioportal-docker-compose

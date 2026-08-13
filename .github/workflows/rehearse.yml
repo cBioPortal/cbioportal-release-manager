@@ -1,0 +1,32 @@
+name: Rehearse
+
+# A weekly read-only run of the preflight. The point is to find out that a check
+# name, a label, a file path or an API shape has moved *before* release day rather
+# than during it. It writes nothing, so it is safe to let fail loudly.
+
+on:
+  schedule:
+    - cron: "23 12 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup
+        id: setup
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - name: Preflight
+        run: uv run release plan --plan plan.json
+        env:
+          GITHUB_TOKEN: ${{ steps.setup.outputs.token }}
+      - name: Release notes
+        run: uv run release notes --plan plan.json
+        env:
+          GITHUB_TOKEN: ${{ steps.setup.outputs.token }}
