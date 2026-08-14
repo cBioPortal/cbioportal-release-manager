@@ -4,6 +4,13 @@ name: Release
 # every stage first checks whether its work is already done, "Re-run failed jobs"
 # picks up where the release stopped instead of redoing the 20-minute Maven
 # Central publish.
+#
+# TEMPORARY: stages 2 and 4-8 also sit behind the `release-approval` environment,
+# so the release advances one stage per human approval while the first few real
+# releases are watched by hand. Drop those `environment:` lines once it is trusted.
+# Two must not change with them: stage 3's gate is permanent (it triggers an
+# irreversible publish), and stage 9 must never be gated (it reports failures, so
+# needing approval to find out what broke defeats the point).
 
 on:
   workflow_dispatch:
@@ -52,6 +59,7 @@ jobs:
     name: 2 · release notes
     needs: [plan]
     runs-on: ubuntu-latest
+    environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
@@ -70,8 +78,8 @@ jobs:
     name: 3 · cut frontend release
     needs: [notes]
     runs-on: ubuntu-latest
-    # The Maven Central publish this sets off cannot be undone, so it is the one
-    # place a human signs off. Add required reviewers to the environment.
+    # The Maven Central publish this sets off cannot be undone. This gate is
+    # permanent: it stays after the temporary per-stage gates above come off.
     environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -92,6 +100,7 @@ jobs:
     needs: [frontend_release]
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
@@ -110,6 +119,7 @@ jobs:
     name: 5 · point backend at the new frontend
     needs: [frontend_central]
     runs-on: ubuntu-latest
+    environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
@@ -138,6 +148,7 @@ jobs:
     name: 6 · cut backend release
     needs: [backend_pom]
     runs-on: ubuntu-latest
+    environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
@@ -162,6 +173,7 @@ jobs:
     needs: [backend_release]
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
@@ -180,6 +192,7 @@ jobs:
     name: 8 · reopen master for development
     needs: [backend_release]
     runs-on: ubuntu-latest
+    environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup

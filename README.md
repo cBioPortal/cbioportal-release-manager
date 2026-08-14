@@ -1,4 +1,4 @@
-# cbioportal-release-manager
+# cBioPortal Release Manager
 
 Cuts the weekly release across `cbioportal` and `cbioportal-frontend`, up to a
 published and verified Docker image, then files an issue saying what to deploy.
