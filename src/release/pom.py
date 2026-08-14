@@ -118,6 +118,10 @@ def await_pr_checks(gh: GitHub, config: dict, repo: str, number: int,
                     sleep=time.sleep) -> None:
     key = "backend" if repo == config["repos"]["backend"] else "frontend"
     required = config["required_checks"][key]
+    if not required:
+        logger.warning("%s PR #%s: no required checks configured; merging unguarded",
+                       repo, number)
+        return
     attempts = config["timeouts"]["checks_attempts"]
     interval = config["timeouts"]["checks_interval_seconds"]
 

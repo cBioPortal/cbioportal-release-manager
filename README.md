@@ -107,11 +107,15 @@ Everything environment-specific lives there. The parts most likely to need
 updating:
 
 **`[required_checks]`** — an allowlist of checks that must be green before a
-release starts, covering both GitHub check-runs and CircleCI commit statuses.
-It is not "everything green": the combined status of both masters is normally
-`failure` (sonarcloud, GitBook, Dependabot, `e2e_localdb`), so requiring
-everything would block every release. Add a check here only if it should genuinely
-stop a release. To see the current names on a commit:
+release starts (stage 1, on the pinned SHA) and before a pom PR is merged
+(stages 5 and 8), covering both GitHub check-runs and CircleCI commit statuses.
+
+Both lists are currently **empty, so CI does not gate a release at all**; stages 1,
+5 and 8 each log a warning saying so. That is deliberate — the combined status of
+both masters is normally `failure` (sonarcloud, GitBook, Dependabot,
+`e2e_localdb`), so there was no dependable gate to enforce. It is an allowlist,
+never "everything green": add a name only if it should genuinely stop a release.
+To see the current names on a commit:
 
 ```bash
 gh api repos/cBioPortal/cbioportal/commits/master/check-runs --jq '.check_runs[].name'

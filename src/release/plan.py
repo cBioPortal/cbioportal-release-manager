@@ -80,6 +80,8 @@ def count_prs(body: str) -> int:
 def verify_checks(gh: GitHub, repo: str, sha: str, required: list[str],
                   pre: Preflight) -> None:
     if not required:
+        logger.warning("%s: no required checks configured; CI is not gating this release",
+                       repo)
         return
     logger.info("checking %d required checks on %s", len(required), repo)
     states = gh.combined_state(repo, sha)
