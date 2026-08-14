@@ -6,7 +6,7 @@ name: Rehearse
 
 on:
   schedule:
-    - cron: "23 12 * * 1"
+    - cron: "23 20 * * 1"
   workflow_dispatch:
 
 permissions:

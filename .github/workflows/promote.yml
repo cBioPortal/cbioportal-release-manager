@@ -1,12 +1,12 @@
 name: Promote
 
-# Two things, deliberately separate. The nightly scan only ever opens an issue:
+# Two things, deliberately separate. The weekly scan only ever opens an issue:
 # "it ran in production for a month with no major issues" is a judgement call, not
 # a cron job. The manual dispatch does the actual promotion once that call is made.
 
 on:
   schedule:
-    - cron: "17 13 * * *"
+    - cron: "17 1 * * 2"
   workflow_dispatch:
     inputs:
       version:
