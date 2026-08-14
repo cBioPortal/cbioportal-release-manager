@@ -99,10 +99,15 @@ def cmd_release_backend(args, config) -> int:
         head = gh.branch_sha(repo, branch)
         pom_version, frontend_pin = read_values(Path(args.workdir))
         if (pom_version, frontend_pin) != (version, version):
-            raise SystemExit(
-                f"refusing to tag {version}: pom at {head[:8]} says version={pom_version}, "
-                f"frontend={frontend_pin}. Stage 5 did not land."
+            message = (
+                f"pom at {head[:8]} says version={pom_version}, frontend={frontend_pin}, "
+                f"expected {version} for both"
             )
+            # On a dry run the previous stage deliberately did not merge, so this
+            # mismatch is expected and must not fail the rehearsal.
+            if not args.dry_run:
+                raise SystemExit(f"refusing to tag {version}: {message}. Stage 5 did not land.")
+            logging.getLogger(__name__).warning("[dry-run] %s (stage 5 did not merge)", message)
 
         bodies = notes.build(gh, config, current)
         publish.cut_release(gh, repo, version, head, bodies["backend"], args.dry_run)

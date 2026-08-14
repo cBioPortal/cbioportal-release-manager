@@ -201,7 +201,8 @@ def ensure_publishing(gh: GitHub, repo: str, workflow: str, tag: str, dry_run: b
     treating "no run yet" as "no run coming" would cause the very duplicate it is
     meant to prevent.
     """
-    deadline = max(1, grace_seconds // 10)
+    # Nothing will ever appear on a dry run, so do not sit out the grace period twice.
+    deadline = 1 if dry_run else max(1, grace_seconds // 10)
     for attempt in range(1, deadline + 1):
         runs = publish_runs(gh, repo, workflow, tag)
         active = [r for r in runs if r["status"] in ACTIVE]
