@@ -139,7 +139,7 @@ def cmd_await_backend(args, config) -> int:
 
 def cmd_bump_snapshot(args, config) -> int:
     with logs.group("reopen master for development"):
-        bump_snapshot(_gh(), config, plan.read(args.plan), Path(args.workdir), args.dry_run)
+        bump_snapshot(config, plan.read(args.plan), Path(args.workdir), args.dry_run)
     return 0
 
 

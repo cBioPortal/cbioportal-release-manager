@@ -5,8 +5,8 @@ name: Rehearse
 # than during it. It writes nothing, so it is safe to let fail loudly.
 
 on:
-  schedule:
-    - cron: "23 20 * * 1"
+#  schedule:
+#    - cron: "23 20 * * 1"
   workflow_dispatch:
 
 permissions:

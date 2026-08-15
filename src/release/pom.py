@@ -1,4 +1,8 @@
-"""Stages 5 and 8: the two backend pom edits, each as a reviewed PR.
+"""Stages 5 and 8: the two backend pom edits, each committed straight to master.
+
+Not PRs. Both commits are release logistics -- a version string and a frontend
+pin -- so there is nothing to review, and a PR would file them in the same
+release-drafter draft this release goes on to publish.
 
 Both use `mvn versions:set` rather than sed. The disabled `snapshot-release.yml`
 is a standing demonstration of why: its sed looked for `<version>...-SNAPSHOT</version>`
@@ -12,7 +16,6 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-import time
 from pathlib import Path
 
 from . import version as ver
@@ -85,60 +88,54 @@ def assert_only_pom_changed(workdir: Path) -> None:
         raise PomError(f"expected only pom.xml to change, got: {changed or 'nothing'}")
 
 
-# ---- the shared branch/PR/merge path ---------------------------------------
+# ---- the shared commit path ------------------------------------------------
+
+PUSH_ATTEMPTS = 3
 
 
-def open_and_merge(gh: GitHub, config: dict, workdir: Path, repo: str, base: str,
-                   branch: str, message: str, body: str, dry_run: bool) -> dict:
+def commit_to_base(workdir: Path, repo: str, base: str, message: str, body: str,
+                   expect: tuple[str, str | None], dry_run: bool) -> dict:
+    """Commit pom.xml onto `base` itself, fast-forward only.
+
+    `expect` is the (project version, frontend pin) this edit intends to leave on
+    the branch. If the push is rejected because someone merged first, the commit
+    is rebased onto whatever landed and the pom is re-read: a clean rebase that
+    still changed those two values means two things are editing the pom at once,
+    which needs a human rather than a retry.
+    """
     if dry_run:
-        logger.info("[dry-run] would commit %r on %s and merge into %s", message, branch, base)
+        logger.info("[dry-run] would commit %r onto %s", message, base)
         logger.info("%s", run(["git", "diff"], workdir))
         return {"dry_run": True}
 
     run(["git", "config", "user.name", "cbioportal-release-manager"], workdir)
     run(["git", "config", "user.email",
          "cbioportal-release-manager@users.noreply.github.com"], workdir)
-    run(["git", "checkout", "-B", branch], workdir)
     run(["git", "add", "pom.xml"], workdir)
-    run(["git", "commit", "-m", message], workdir)
-    run(["git", "push", "--force-with-lease", "origin", branch], workdir)
+    run(["git", "commit", "-m", message, "-m", body], workdir)
 
-    pull = gh.find_pull(repo, branch, base) or gh.create_pull(
-        repo, branch, base, message, body
-    )
-    logger.info("%s: PR #%s %s", repo, pull["number"], pull["html_url"])
-
-    await_pr_checks(gh, config, repo, pull["number"])
-    gh.merge_pull(repo, pull["number"], method="squash")
-    logger.info("%s: merged #%s", repo, pull["number"])
-    return pull
-
-
-def await_pr_checks(gh: GitHub, config: dict, repo: str, number: int,
-                    sleep=time.sleep) -> None:
-    key = "backend" if repo == config["repos"]["backend"] else "frontend"
-    required = config["required_checks"][key]
-    if not required:
-        logger.warning("%s PR #%s: no required checks configured; merging unguarded",
-                       repo, number)
-        return
-    attempts = config["timeouts"]["checks_attempts"]
-    interval = config["timeouts"]["checks_interval_seconds"]
-
-    for attempt in range(1, attempts + 1):
-        pull = gh.get(f"/repos/{repo}/pulls/{number}")
-        states = gh.combined_state(repo, pull["head"]["sha"])
-        pending = [n for n in required if states.get(n) in (None, "pending")]
-        failed = [n for n in required
-                  if states.get(n) not in (None, "pending", "success", "neutral", "skipped")]
-        if failed:
-            raise PomError(f"{repo} PR #{number}: required checks failed: {failed}")
-        if not pending:
-            logger.info("%s PR #%s: required checks green", repo, number)
-            return
-        logger.info("waiting on %s (%d/%d)", pending, attempt, attempts)
-        sleep(interval)
-    raise PomError(f"{repo} PR #{number}: checks did not finish in time")
+    for attempt in range(1, PUSH_ATTEMPTS + 1):
+        try:
+            run(["git", "push", "origin", f"HEAD:{base}"], workdir)
+        except PomError:
+            if attempt == PUSH_ATTEMPTS:
+                raise
+            logger.warning("%s: push to %s rejected, rebasing (%d/%d)",
+                           repo, base, attempt, PUSH_ATTEMPTS)
+            # FETCH_HEAD, not origin/<base>: actions/checkout does not leave a
+            # remote-tracking ref that can be relied on here.
+            run(["git", "fetch", "origin", base], workdir)
+            run(["git", "rebase", "FETCH_HEAD"], workdir)
+            landed = read_values(workdir)
+            if landed != expect:
+                raise PomError(
+                    f"{repo}: {base} moved and the pom no longer matches this edit: "
+                    f"got {landed}, expected {expect}"
+                ) from None
+            continue
+        sha = run(["git", "rev-parse", "HEAD"], workdir).strip()
+        logger.info("%s: committed %s to %s", repo, sha[:8], base)
+        return {"sha": sha}
 
 
 # ---- stage 5 ---------------------------------------------------------------
@@ -167,16 +164,16 @@ def bump_frontend(gh: GitHub, config: dict, plan: dict, workdir: Path,
         )
 
     drift = drift_note(gh, repo, base, plan["backend"]["sha"])
-    return open_and_merge(
-        gh, config, workdir, repo, base,
-        branch=f"release/{target}-frontend",
+    return commit_to_base(
+        workdir, repo, base,
         message=f"Frontend {target}",
         body=(
             f"Points the backend at frontend `{target}`.\n\n"
             f"- `<version>`: `{current_version}` -> `{target}`\n"
             f"- `<{prop}>`: `{current_frontend}` -> `{target}`\n\n"
-            f"Opened by cbioportal-release-manager.{drift}"
+            f"Committed by cbioportal-release-manager.{drift}"
         ),
+        expect=(target, target),
         dry_run=dry_run,
     )
 
@@ -205,8 +202,7 @@ def drift_note(gh: GitHub, repo: str, base: str, pinned: str) -> str:
 # ---- stage 8 ---------------------------------------------------------------
 
 
-def bump_snapshot(gh: GitHub, config: dict, plan: dict, workdir: Path,
-                  dry_run: bool) -> dict:
+def bump_snapshot(config: dict, plan: dict, workdir: Path, dry_run: bool) -> dict:
     released = plan["version"]
     target = ver.snapshot(released)
     repo = config["repos"]["backend"]
@@ -238,15 +234,15 @@ def bump_snapshot(gh: GitHub, config: dict, plan: dict, workdir: Path,
     if parent_version(workdir) != before_parent:
         raise PomError("snapshot bump changed the parent version")
 
-    return open_and_merge(
-        gh, config, workdir, repo, base,
-        branch=f"release/{target}",
+    return commit_to_base(
+        workdir, repo, base,
         message=f"Prepare for {target}",
         body=(
             f"Reopens `{base}` for development after `{released}`.\n\n"
             f"- `<version>`: `{current_version}` -> `{target}`\n"
             f"- frontend pin left at `{current_frontend}`\n\n"
-            f"Opened by cbioportal-release-manager."
+            f"Committed by cbioportal-release-manager."
         ),
+        expect=(target, current_frontend),
         dry_run=dry_run,
     )

@@ -85,13 +85,17 @@ sits behind the `release-approval` environment.
 
 Dispatch **Release**. Leave `bump` on `patch` unless the release needs a database
 migration or breaks something. When it finishes, `Release vX.Y.Z` is filed in this
-repo with the image tag and `sha256` digest; close it once deployed.
+repo with the image tag and `sha256` digest, assigned to `RELEASE_ASSIGNEE` and put
+on [cBioPortal Team Planning](https://github.com/orgs/cBioPortal/projects/19) in
+**Todo** and the current sprint; close it once deployed.
 
 ## Repository setup
 
 A GitHub App installed on `cbioportal`, `cbioportal-frontend`, `cbioportal-helm`,
 `cbioportal-docker-compose` and this repo, with permissions: contents **write**,
-pull requests **write**, issues **write**, actions **write**, metadata **read**.
+pull requests **write**, issues **write**, actions **write**, metadata **read**, and
+the organisation permission projects **write** so stage 9 can put the release issue
+on the team planning board.
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -101,17 +105,23 @@ pull requests **write**, issues **write**, actions **write**, metadata **read**.
 | Environment | `release-approval` | with required reviewers |
 | Labels | `release`, `succeeded`, `failed`, `promotion` | in this repo |
 
+The App must also be on the bypass list for branch protection on `cbioportal`
+`master`. Stages 5 and 8 commit the pom directly to `master` rather than opening a
+PR — those two commits are release logistics, and a PR would file them in the
+release notes this release then publishes. Without the bypass both stages fail on
+the push.
+
 ## Maintaining config.toml
 
 Everything environment-specific lives there. The parts most likely to need
 updating:
 
 **`[required_checks]`** — an allowlist of checks that must be green before a
-release starts (stage 1, on the pinned SHA) and before a pom PR is merged
-(stages 5 and 8), covering both GitHub check-runs and CircleCI commit statuses.
+release starts (stage 1, on the pinned SHA), covering both GitHub check-runs and
+CircleCI commit statuses.
 
-Both lists are currently **empty, so CI does not gate a release at all**; stages 1,
-5 and 8 each log a warning saying so. That is deliberate — the combined status of
+Both lists are currently **empty, so CI does not gate a release at all**; stage 1
+logs a warning saying so. That is deliberate — the combined status of
 both masters is normally `failure` (sonarcloud, GitBook, Dependabot,
 `e2e_localdb`), so there was no dependable gate to enforce. It is an allowlist,
 never "everything green": add a name only if it should genuinely stop a release.

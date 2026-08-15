@@ -5,8 +5,8 @@ name: Promote
 # a cron job. The manual dispatch does the actual promotion once that call is made.
 
 on:
-  schedule:
-    - cron: "17 1 * * 2"
+#  schedule:
+#    - cron: "17 1 * * 2"
   workflow_dispatch:
     inputs:
       version:

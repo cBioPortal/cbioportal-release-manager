@@ -1,8 +1,43 @@
+import datetime
+
 import pytest
 
 from release import publish, report
 
 DIGEST = "sha256:c0d11a53c9831cfc919509e2ceb571412fabd093aa378daaeb8ae995f022d185"
+TODAY = datetime.date.today()
+
+
+PROJECT = {
+    "id": "PVT_project",
+    "fields": {
+        "nodes": [
+            {"id": "PVTF_title", "name": "Title"},
+            {
+                "id": "PVTSSF_status",
+                "name": "Status",
+                "options": [
+                    {"id": "opt_todo", "name": "Todo"},
+                    {"id": "opt_done", "name": "Done"},
+                ],
+            },
+            {
+                "id": "PVTIF_sprint",
+                "name": "Sprint",
+                "configuration": {
+                    "iterations": [
+                        {"id": "it_82", "title": "Sprint 82",
+                         "startDate": str(TODAY - datetime.timedelta(days=1)),
+                         "duration": 7},
+                        {"id": "it_83", "title": "Sprint 83",
+                         "startDate": str(TODAY + datetime.timedelta(days=6)),
+                         "duration": 7},
+                    ]
+                },
+            },
+        ]
+    },
+}
 
 
 class FakeGitHub:
@@ -13,6 +48,17 @@ class FakeGitHub:
         self.issues = []
         self.updates = []
         self.comments = []
+        self.project_items = []
+        self.field_values = []
+
+    def graphql(self, query, **variables):
+        if "projectV2(number:" in query:
+            return {"organization": {"projectV2": PROJECT}}
+        if "addProjectV2ItemById" in query:
+            self.project_items.append(variables["content"])
+            return {"addProjectV2ItemById": {"item": {"id": "PVTI_item"}}}
+        self.field_values.append((variables["field"], variables["value"]))
+        return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_item"}}}
 
     def release_by_tag(self, repo, tag):
         if not self.released:
@@ -32,6 +78,7 @@ class FakeGitHub:
     def create_issue(self, repo, title, body, labels, assignees):
         issue = {
             "number": len(self.issues) + 1,
+            "node_id": "I_issue",
             "title": title,
             "body": body,
             "labels": labels,
@@ -137,6 +184,53 @@ def test_dry_run_files_nothing(happy, config):
     gh = FakeGitHub()
     report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=True)
     assert gh.issues == []
+    assert gh.project_items == []
+
+
+def test_issue_lands_on_the_board_in_todo_and_the_current_sprint(happy, config, monkeypatch):
+    monkeypatch.setenv("RELEASE_ASSIGNEE", "zainasir")
+    gh = FakeGitHub()
+    report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=False)
+    assert gh.project_items == ["I_issue"]
+    assert gh.field_values == [
+        ("PVTSSF_status", {"singleSelectOptionId": "opt_todo"}),
+        ("PVTIF_sprint", {"iterationId": "it_82"}),
+    ]
+
+    # A re-run must re-assert both, not just leave the item where it was.
+    report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=False)
+    assert gh.project_items == ["I_issue", "I_issue"]
+    assert len(gh.field_values) == 4
+
+
+def test_a_broken_board_does_not_fail_the_hand_off(happy, config, caplog):
+    class NoProject(FakeGitHub):
+        def graphql(self, query, **variables):
+            raise RuntimeError("Resource not accessible by integration")
+
+    gh = NoProject()
+    report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=False)
+    assert len(gh.issues) == 1
+    assert "could not add the issue to project" in caplog.text
+
+
+def test_current_iteration_is_the_one_today_falls_in():
+    iterations = [
+        {"id": "now", "title": "now",
+         "startDate": str(TODAY - datetime.timedelta(days=2)), "duration": 7},
+        {"id": "next", "title": "next",
+         "startDate": str(TODAY + datetime.timedelta(days=5)), "duration": 7},
+    ]
+    assert report._current_iteration(iterations)["id"] == "now"
+
+
+def test_between_sprints_falls_forward_to_the_next_one():
+    iterations = [
+        {"id": "next", "title": "next",
+         "startDate": str(TODAY + datetime.timedelta(days=3)), "duration": 7},
+    ]
+    assert report._current_iteration(iterations)["id"] == "next"
+    assert report._current_iteration([]) is None
 
 
 def test_labels_reflect_the_outcome(happy, config, monkeypatch):

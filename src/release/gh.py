@@ -78,6 +78,13 @@ class GitHub:
     def put(self, path: str, json: dict):
         return self.request("PUT", path, json=json)
 
+    def graphql(self, query: str, **variables):
+        """The one thing REST cannot do: Projects v2 is GraphQL-only."""
+        payload = self.post("/graphql", {"query": query, "variables": variables})
+        if payload.get("errors"):
+            raise GitHubError(f"graphql: {payload['errors']}")
+        return payload["data"]
+
     def paginate(self, path: str, key: str | None = None):
         """Yield items across pages. `key` names the list field for envelope responses."""
         url = f"{path}{'&' if '?' in path else '?'}per_page=100"
@@ -176,9 +183,6 @@ class GitHub:
         owner = repo.split("/")[0]
         pulls = self.get(f"/repos/{repo}/pulls?head={owner}:{head_branch}&base={base}&state=open")
         return pulls[0] if pulls else None
-
-    def merge_pull(self, repo: str, number: int, method: str = "squash") -> dict:
-        return self.put(f"/repos/{repo}/pulls/{number}/merge", {"merge_method": method})
 
     def dispatch_workflow(self, repo: str, workflow: str, ref: str, inputs: dict) -> dict:
         return self.post(

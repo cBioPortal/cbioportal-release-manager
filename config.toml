@@ -37,8 +37,16 @@ maven_attempts = 30
 maven_interval_seconds = 60
 docker_attempts = 30
 docker_interval_seconds = 60
-checks_attempts = 60
-checks_interval_seconds = 30
+
+[project]
+# The team planning board. Assigning the release issue is not enough on its own:
+# the sprint view only lists issues that are items on this project with a status
+# and an iteration set. https://github.com/orgs/cBioPortal/projects/19
+org = "cBioPortal"
+number = 19
+status_field = "Status"
+status_value = "Todo"
+sprint_field = "Sprint"
 
 [promotion]
 # A pre-release older than this is due for promotion to official.

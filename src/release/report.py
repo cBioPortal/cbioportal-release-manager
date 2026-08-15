@@ -8,6 +8,7 @@ today nothing says "v7.0.6 is out and this exact digest is what you deploy".
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 
@@ -95,15 +96,6 @@ def success_body(config: dict, plan: dict, state: dict, results: dict, run_url: 
         f"| Platforms | {', '.join(image.get('platforms', [])) or 'unknown'} |",
         f"| Backend master now | `{state['pom_snapshot']}` |",
         "",
-        "## Next: deploy this",
-        "",
-        "Deployment is deliberately not automated. Update the release-pinned",
-        "deployments in `knowledgesystems/knowledgesystems-k8s-deployment` to the",
-        "digest above, in both EKS accounts, then close this issue.",
-        "",
-        "- [ ] Public cluster `203403084713`",
-        "- [ ] Internal cluster `666628074417`",
-        "",
         "## Stages",
         "",
     ]
@@ -111,6 +103,15 @@ def success_body(config: dict, plan: dict, state: dict, results: dict, run_url: 
     if plan.get("warnings"):
         lines += ["", "## Warnings", ""] + [f"- {w}" for w in plan["warnings"]]
     lines += ["", f"[Workflow run]({run_url})"]
+    # Last, so it is what the reader is left on: the issue exists to get this done.
+    lines += [
+        "",
+        "## 🚀 Next: deploy this",
+        "",
+        ("Deployment is deliberately not automated. Update the relevant deployments in "
+         "`knowledgesystems/knowledgesystems-k8s-deployment` to the digest above, then "
+         "close this issue."),
+    ]
     return "\n".join(lines)
 
 
@@ -158,6 +159,95 @@ def build(gh: GitHub, config: dict, plan: dict, results: dict[str, str],
     return title, success_body(config, plan, state, results, run_url), True
 
 
+PROJECT_QUERY = """
+query($org: String!, $number: Int!) {
+  organization(login: $org) {
+    projectV2(number: $number) {
+      id
+      fields(first: 50) {
+        nodes {
+          ... on ProjectV2SingleSelectField { id name options { id name } }
+          ... on ProjectV2IterationField {
+            id name
+            configuration { iterations { id title startDate duration } }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+ADD_ITEM = """
+mutation($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: {projectId: $project, contentId: $content}) {
+    item { id }
+  }
+}
+"""
+
+SET_FIELD = """
+mutation($project: ID!, $item: ID!, $field: ID!, $value: ProjectV2FieldValue!) {
+  updateProjectV2ItemFieldValue(
+    input: {projectId: $project, itemId: $item, fieldId: $field, value: $value}
+  ) { projectV2Item { id } }
+}
+"""
+
+
+def _current_iteration(iterations: list[dict]) -> dict | None:
+    """The sprint today falls in. `iterations` excludes completed ones already."""
+    today = datetime.date.today()
+    for iteration in iterations:
+        start = datetime.date.fromisoformat(iteration["startDate"])
+        if start <= today < start + datetime.timedelta(days=iteration["duration"]):
+            return iteration
+    # Between sprints, or the board has run out: the next one up is the useful answer.
+    return iterations[0] if iterations else None
+
+
+def add_to_project(gh: GitHub, config: dict, issue: dict) -> None:
+    """Put the issue on the team planning board, in Todo and the current sprint.
+
+    Assigning is not enough: the sprint view only lists project items, so an issue
+    that is merely assigned is invisible to the person who owns the deploy. Adding
+    is idempotent, and re-runs re-assert both fields -- the release issue is meant
+    to be freshly actionable after a retry.
+
+    Failures here are logged, not raised. The issue is the deliverable; a board
+    that did not get updated is worth a warning, not a red stage 9.
+    """
+    settings = config["project"]
+    try:
+        data = gh.graphql(PROJECT_QUERY, org=settings["org"], number=settings["number"])
+        project = data["organization"]["projectV2"]
+        fields = {node["name"]: node for node in project["fields"]["nodes"] if node}
+
+        item = gh.graphql(
+            ADD_ITEM, project=project["id"], content=issue["node_id"]
+        )["addProjectV2ItemById"]["item"]["id"]
+
+        status = fields[settings["status_field"]]
+        wanted = settings["status_value"].casefold()
+        option = next(o for o in status["options"] if o["name"].casefold() == wanted)
+        gh.graphql(SET_FIELD, project=project["id"], item=item, field=status["id"],
+                   value={"singleSelectOptionId": option["id"]})
+
+        sprint = fields[settings["sprint_field"]]
+        iteration = _current_iteration(sprint["configuration"]["iterations"])
+        if iteration:
+            gh.graphql(SET_FIELD, project=project["id"], item=item, field=sprint["id"],
+                       value={"iterationId": iteration["id"]})
+            logger.info("added to %s: %s / %s", project["id"], option["name"],
+                        iteration["title"])
+        else:
+            logger.warning("%s has no open iteration; issue added without a sprint",
+                           settings["sprint_field"])
+    except Exception as error:  # a board hiccup must not fail the hand-off
+        logger.warning("could not add the issue to project %s/%s: %s",
+                       settings["org"], settings["number"], error)
+
+
 def file_issue(gh: GitHub, config: dict, title: str, body: str, succeeded: bool,
                dry_run: bool) -> dict:
     """Create the release issue, or update it in place if this run is a retry."""
@@ -186,10 +276,12 @@ def file_issue(gh: GitHub, config: dict, title: str, body: str, succeeded: bool,
             f"Updated after a re-run: **{'succeeded' if succeeded else 'failed'}**.",
         )
         logger.info("updated %s", existing["html_url"])
-        return existing
+        issue = existing
+    else:
+        issue = gh.create_issue(repo, title, body, labels, assignees)
+        logger.info("filed %s", issue["html_url"])
 
-    issue = gh.create_issue(repo, title, body, labels, assignees)
-    logger.info("filed %s", issue["html_url"])
+    add_to_project(gh, config, issue)
     return issue
 
 
