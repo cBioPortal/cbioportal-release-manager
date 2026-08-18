@@ -40,8 +40,14 @@ VALUES_YAML = """container:
 """
 
 
+def official(tag: str) -> list[dict]:
+    """RELEASES with `tag` flipped official -- i.e. the world after a promotion."""
+    return [{**r, "prerelease": False} if r["tag_name"] == tag else r for r in RELEASES]
+
+
 class FakeGitHub:
-    def __init__(self):
+    def __init__(self, releases=RELEASES):
+        self._releases = releases
         self.files = {
             ".env": COMPOSE_ENV,
             "charts/cbioportal/Chart.yaml": CHART_YAML,
@@ -53,10 +59,10 @@ class FakeGitHub:
         self.updated_releases = []
 
     def releases(self, repo):
-        return RELEASES
+        return self._releases
 
     def release_by_tag(self, repo, tag):
-        found = next((r for r in RELEASES if r["tag_name"] == tag), None)
+        found = next((r for r in self._releases if r["tag_name"] == tag), None)
         return {**found, "id": 7} if found else None
 
     def update_release(self, repo, release_id, **fields):
@@ -107,6 +113,18 @@ def test_due_excludes_prereleases_inside_the_window(config):
     # v7.0.5 is 34 days old at NOW... check the boundary explicitly instead.
     due = promote.due(FakeGitHub(), config, now=datetime(2026, 7, 20, tzinfo=UTC))
     assert [d["tag"] for d in due] == ["v7.0.3"]
+
+
+def test_due_ignores_prereleases_behind_the_official_release(config):
+    # v7.0.4 official: v7.0.3 is behind it and will never be promoted now.
+    tags = [d["tag"] for d in promote.due(FakeGitHub(official("v7.0.4")), config, now=NOW)]
+    assert tags == ["v7.0.5"]
+
+
+def test_promoting_the_newest_clears_the_backlog(config):
+    # The wrinkle: promoting v7.0.5 must leave nothing outstanding behind it,
+    # rather than re-flagging v7.0.3 and v7.0.4 on the next scan.
+    assert promote.due(FakeGitHub(official("v7.0.5")), config, now=NOW) == []
 
 
 def test_due_reports_age(config):

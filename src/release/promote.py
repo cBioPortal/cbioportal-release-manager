@@ -27,14 +27,28 @@ class PromotionError(RuntimeError):
 
 
 def due(gh: GitHub, config: dict, now: datetime | None = None) -> list[dict]:
-    """Pre-releases old enough to be considered for official status."""
+    """Pre-releases old enough to be considered, and still ahead of the official one."""
     now = now or datetime.now(UTC)
     cutoff = now - timedelta(days=config["promotion"]["age_days"])
+    releases = gh.releases(config["repos"]["backend"])
+
+    # Promotion only ever moves forward. Once a version is official, every
+    # pre-release behind it is dead -- nobody will go back and promote v7.0.3
+    # after v7.0.5 shipped -- so those must not keep showing up as outstanding.
+    official = [
+        ver.parse(release["tag_name"]) for release in releases
+        if not release["draft"] and not release["prerelease"]
+        and ver.is_release_tag(release["tag_name"])
+    ]
+    floor = max(official) if official else None
+
     out = []
-    for release in gh.releases(config["repos"]["backend"]):
+    for release in releases:
         if release["draft"] or not release["prerelease"]:
             continue
         if not ver.is_release_tag(release["tag_name"]):
+            continue
+        if floor is not None and ver.parse(release["tag_name"]) <= floor:
             continue
         published = datetime.fromisoformat(release["published_at"].replace("Z", "+00:00"))
         if published <= cutoff:
@@ -71,7 +85,7 @@ def scan(gh: GitHub, config: dict, dry_run: bool) -> dict | None:
             "2. It flips both repos to official and opens the helm and",
             "   docker-compose bumps for review.",
             "",
-            "Older pre-releases still outstanding:",
+            "Promoting it retires the pre-releases it skips past:",
             "",
         ]
         + ([f"- `{c['tag']}` ({c['age_days']}d)" for c in candidates[:-1]] or ["- none"])
