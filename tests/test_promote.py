@@ -4,6 +4,8 @@ import pytest
 
 from release import promote
 
+from .conftest import SPRINT, TODO, BoardStub
+
 NOW = datetime(2026, 8, 12, tzinfo=UTC)
 
 # The real state of cBioPortal/cbioportal on 2026-08-12: three pre-releases
@@ -45,8 +47,9 @@ def official(tag: str) -> list[dict]:
     return [{**r, "prerelease": False} if r["tag_name"] == tag else r for r in RELEASES]
 
 
-class FakeGitHub:
+class FakeGitHub(BoardStub):
     def __init__(self, releases=RELEASES):
+        super().__init__()
         self._releases = releases
         self.files = {
             ".env": COMPOSE_ENV,
@@ -57,6 +60,8 @@ class FakeGitHub:
         self.pulls = []
         self.refs = set()
         self.updated_releases = []
+        self.issues = []
+        self.assigned = []
 
     def releases(self, repo):
         return self._releases
@@ -90,9 +95,34 @@ class FakeGitHub:
         return None
 
     def create_pull(self, repo, head, base, title, body):
-        pull = {"repo": repo, "title": title, "html_url": f"https://github.com/{repo}/pull/1"}
+        pull = {
+            "repo": repo,
+            "title": title,
+            "number": 42,
+            "node_id": f"PR_{repo}",
+            "html_url": f"https://github.com/{repo}/pull/1",
+        }
         self.pulls.append(pull)
         return pull
+
+    def find_issue(self, repo, title):
+        return next((i for i in self.issues if i["title"] == title), None)
+
+    def create_issue(self, repo, title, body, labels, assignees):
+        issue = {
+            "number": len(self.issues) + 1,
+            "node_id": "I_promotion",
+            "title": title,
+            "body": body,
+            "assignees": [{"login": a} for a in assignees],
+            "html_url": f"https://github.com/{repo}/issues/1",
+        }
+        self.issues.append(issue)
+        return issue
+
+    def update_issue(self, repo, number, **fields):
+        self.assigned.append((repo, number, fields.get("assignees")))
+        return {}
 
 
 def test_due_finds_overdue_prereleases(config):
@@ -187,3 +217,35 @@ def test_bump_downstream_writes_nothing_on_a_dry_run(config):
     gh = FakeGitHub()
     promote.bump_downstream(gh, config, "v7.0.6", dry_run=True)
     assert gh.written == {} and gh.pulls == []
+    assert gh.assigned == [] and gh.project_items == []
+
+
+def test_the_promotion_issue_lands_on_the_board(config, monkeypatch):
+    monkeypatch.setenv("RELEASE_ASSIGNEE", "zainasir")
+    gh = FakeGitHub()
+    promote.scan(gh, config, dry_run=False)
+    assert gh.issues[0]["assignees"] == [{"login": "zainasir"}]
+    assert gh.project_items == ["I_promotion"]
+    assert gh.field_values == [TODO, SPRINT]
+
+
+def test_bump_prs_are_assigned_and_land_on_the_board(config, monkeypatch):
+    monkeypatch.setenv("RELEASE_ASSIGNEE", "zainasir")
+    gh = FakeGitHub()
+    promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)
+
+    compose, helm = config["repos"]["compose"], config["repos"]["helm"]
+    assert gh.assigned == [
+        (compose, 42, ["zainasir"]),
+        (helm, 42, ["zainasir"]),
+    ]
+    # These are the PRs that historically rot unmerged, so both must be visible.
+    assert gh.project_items == [f"PR_{compose}", f"PR_{helm}"]
+    assert gh.field_values == [TODO, SPRINT, TODO, SPRINT]
+
+
+def test_bump_prs_are_left_unassigned_without_a_configured_assignee(config, monkeypatch):
+    monkeypatch.delenv("RELEASE_ASSIGNEE", raising=False)
+    gh = FakeGitHub()
+    promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)
+    assert gh.pulls and gh.assigned == []

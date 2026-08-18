@@ -16,6 +16,7 @@ import os
 import re
 from datetime import UTC, datetime, timedelta
 
+from . import board
 from . import version as ver
 from .gh import GitHub
 
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 class PromotionError(RuntimeError):
     pass
+
+
+def _assignee() -> str:
+    return os.environ.get("RELEASE_ASSIGNEE", "").strip()
 
 
 def due(gh: GitHub, config: dict, now: datetime | None = None) -> list[dict]:
@@ -72,7 +77,7 @@ def scan(gh: GitHub, config: dict, dry_run: bool) -> dict | None:
     newest = candidates[-1]
     title = f"Promote {newest['tag']} to official?"
     repo = config["repos"]["self"]
-    assignee = os.environ.get("RELEASE_ASSIGNEE", "").strip()
+    assignee = _assignee()
 
     body = "\n".join(
         [
@@ -100,6 +105,7 @@ def scan(gh: GitHub, config: dict, dry_run: bool) -> dict | None:
         return None
     issue = gh.create_issue(repo, title, body, ["promotion"], [assignee] if assignee else [])
     logger.info("filed %s", issue["html_url"])
+    board.add(gh, config, issue)
     return issue
 
 
@@ -123,7 +129,11 @@ def flip(gh: GitHub, config: dict, tag: str, dry_run: bool) -> None:
 
 
 def bump_downstream(gh: GitHub, config: dict, tag: str, dry_run: bool) -> list[dict]:
-    """Open PRs bumping the chart and the compose file to the new official version."""
+    """Open PRs bumping the chart and the compose file to the new official version.
+
+    They land assigned and on the board: these are the PRs that historically get
+    forgotten, which is why the chart drifts several minor versions behind.
+    """
     plain = tag.lstrip("v")
     branch = f"release/{tag}"
     edits = [
@@ -145,6 +155,10 @@ def bump_downstream(gh: GitHub, config: dict, tag: str, dry_run: bool) -> list[d
             ],
         ),
     ]
+
+    assignee = _assignee()
+    if not assignee:
+        logger.warning("RELEASE_ASSIGNEE is unset; the bump PRs will be unassigned")
 
     pulls = []
     for repo, base, files in edits:
@@ -180,6 +194,10 @@ def bump_downstream(gh: GitHub, config: dict, tag: str, dry_run: bool) -> list[d
             f"`{tag}` is now the official cBioPortal release.\n\n"
             f"Opened by cbioportal-release-manager.",
         )
+        # A PR is an issue as far as the assignees endpoint is concerned.
+        if assignee:
+            gh.update_issue(repo, pull["number"], assignees=[assignee])
+        board.add(gh, config, pull)
         logger.info("%s: %s", repo, pull["html_url"])
         pulls.append(pull)
     return pulls

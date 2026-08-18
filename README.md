@@ -33,7 +33,7 @@ prints the intended writes instead of making them.
 | Variable | Used by | Purpose |
 | --- | --- | --- |
 | `GITHUB_TOKEN` | all | API auth. Must be able to read draft releases. |
-| `RELEASE_ASSIGNEE` | `report`, `promote-scan` | GitHub handle to assign issues to. Unset means unassigned. |
+| `RELEASE_ASSIGNEE` | `report`, `promote-scan`, `promote` | GitHub handle to assign issues and bump PRs to. Unset means unassigned. |
 | `GITHUB_STEP_SUMMARY` | `plan`, `notes`, `report` | Set by Actions. Appended to when present. |
 | `GITHUB_ACTIONS` | logging | Set by Actions. Switches the log formatter to workflow commands. |
 | `RUNNER_DEBUG` | logging | Set by Actions when a run is re-run with debug logging. Forces `-v`. |
@@ -74,7 +74,7 @@ When adding log lines:
 | Workflow | Trigger | Does |
 | --- | --- | --- |
 | `release.yml` | manual | The release. Inputs: `bump`, `dry_run`. One job per stage. |
-| `promote.yml` | nightly 13:17 UTC, manual | Scans for overdue pre-releases. With a `version` input, performs the promotion. |
+| `promote.yml` | nightly 13:17 UTC, manual | Scans for overdue pre-releases. With a `version` input, performs the promotion. Everything it files — the scan issue and both bump PRs — is assigned and put on the board. |
 | `rehearse.yml` | Mondays 12:23 UTC, manual | Read-only `plan` + `notes`, to catch drift before release day. |
 | `ci.yml` | PR, push to `main` | ruff and pytest. |
 

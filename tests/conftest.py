@@ -1,4 +1,61 @@
+import datetime
+
 import pytest
+
+TODAY = datetime.date.today()
+
+# Shape of the real cBioPortal Team Planning board (project 19), trimmed to the
+# two fields the orchestrator sets. Sprint 82 is dated to be the current one.
+PROJECT = {
+    "id": "PVT_project",
+    "fields": {
+        "nodes": [
+            {"id": "PVTF_title", "name": "Title"},
+            {
+                "id": "PVTSSF_status",
+                "name": "Status",
+                "options": [
+                    {"id": "opt_todo", "name": "Todo"},
+                    {"id": "opt_done", "name": "Done"},
+                ],
+            },
+            {
+                "id": "PVTIF_sprint",
+                "name": "Sprint",
+                "configuration": {
+                    "iterations": [
+                        {"id": "it_82", "title": "Sprint 82",
+                         "startDate": str(TODAY - datetime.timedelta(days=1)),
+                         "duration": 7},
+                        {"id": "it_83", "title": "Sprint 83",
+                         "startDate": str(TODAY + datetime.timedelta(days=6)),
+                         "duration": 7},
+                    ]
+                },
+            },
+        ]
+    },
+}
+
+TODO = ("PVTSSF_status", {"singleSelectOptionId": "opt_todo"})
+SPRINT = ("PVTIF_sprint", {"iterationId": "it_82"})
+
+
+class BoardStub:
+    """Records the Projects v2 GraphQL traffic instead of making it."""
+
+    def __init__(self):
+        self.project_items = []
+        self.field_values = []
+
+    def graphql(self, query, **variables):
+        if "projectV2(number:" in query:
+            return {"organization": {"projectV2": PROJECT}}
+        if "addProjectV2ItemById" in query:
+            self.project_items.append(variables["content"])
+            return {"addProjectV2ItemById": {"item": {"id": "PVTI_item"}}}
+        self.field_values.append((variables["field"], variables["value"]))
+        return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_item"}}}
 
 # Shapes copied from the real release-drafter output in both repos: the backend
 # template emits a literal `## Changes` above $CHANGES, the frontend template does

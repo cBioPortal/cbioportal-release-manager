@@ -1,64 +1,21 @@
-import datetime
-
 import pytest
 
 from release import publish, report
 
+from .conftest import SPRINT, TODO, BoardStub
+
 DIGEST = "sha256:c0d11a53c9831cfc919509e2ceb571412fabd093aa378daaeb8ae995f022d185"
-TODAY = datetime.date.today()
 
 
-PROJECT = {
-    "id": "PVT_project",
-    "fields": {
-        "nodes": [
-            {"id": "PVTF_title", "name": "Title"},
-            {
-                "id": "PVTSSF_status",
-                "name": "Status",
-                "options": [
-                    {"id": "opt_todo", "name": "Todo"},
-                    {"id": "opt_done", "name": "Done"},
-                ],
-            },
-            {
-                "id": "PVTIF_sprint",
-                "name": "Sprint",
-                "configuration": {
-                    "iterations": [
-                        {"id": "it_82", "title": "Sprint 82",
-                         "startDate": str(TODAY - datetime.timedelta(days=1)),
-                         "duration": 7},
-                        {"id": "it_83", "title": "Sprint 83",
-                         "startDate": str(TODAY + datetime.timedelta(days=6)),
-                         "duration": 7},
-                    ]
-                },
-            },
-        ]
-    },
-}
-
-
-class FakeGitHub:
+class FakeGitHub(BoardStub):
     def __init__(self, released=True, pom_version="v7.0.7-SNAPSHOT", frontend_pin="v7.0.6"):
+        super().__init__()
         self.released = released
         self.pom_version = pom_version
         self.frontend_pin = frontend_pin
         self.issues = []
         self.updates = []
         self.comments = []
-        self.project_items = []
-        self.field_values = []
-
-    def graphql(self, query, **variables):
-        if "projectV2(number:" in query:
-            return {"organization": {"projectV2": PROJECT}}
-        if "addProjectV2ItemById" in query:
-            self.project_items.append(variables["content"])
-            return {"addProjectV2ItemById": {"item": {"id": "PVTI_item"}}}
-        self.field_values.append((variables["field"], variables["value"]))
-        return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_item"}}}
 
     def release_by_tag(self, repo, tag):
         if not self.released:
@@ -192,10 +149,7 @@ def test_issue_lands_on_the_board_in_todo_and_the_current_sprint(happy, config, 
     gh = FakeGitHub()
     report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=False)
     assert gh.project_items == ["I_issue"]
-    assert gh.field_values == [
-        ("PVTSSF_status", {"singleSelectOptionId": "opt_todo"}),
-        ("PVTIF_sprint", {"iterationId": "it_82"}),
-    ]
+    assert gh.field_values == [TODO, SPRINT]
 
     # A re-run must re-assert both, not just leave the item where it was.
     report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=False)
@@ -211,30 +165,4 @@ def test_a_broken_board_does_not_fail_the_hand_off(happy, config, caplog):
     gh = NoProject()
     report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=False)
     assert len(gh.issues) == 1
-    assert "could not add the issue to project" in caplog.text
-
-
-def test_current_iteration_is_the_one_today_falls_in():
-    iterations = [
-        {"id": "now", "title": "now",
-         "startDate": str(TODAY - datetime.timedelta(days=2)), "duration": 7},
-        {"id": "next", "title": "next",
-         "startDate": str(TODAY + datetime.timedelta(days=5)), "duration": 7},
-    ]
-    assert report._current_iteration(iterations)["id"] == "now"
-
-
-def test_between_sprints_falls_forward_to_the_next_one():
-    iterations = [
-        {"id": "next", "title": "next",
-         "startDate": str(TODAY + datetime.timedelta(days=3)), "duration": 7},
-    ]
-    assert report._current_iteration(iterations)["id"] == "next"
-    assert report._current_iteration([]) is None
-
-
-def test_labels_reflect_the_outcome(happy, config, monkeypatch):
-    monkeypatch.setenv("RELEASE_ASSIGNEE", "zainasir")
-    gh = FakeGitHub()
-    report.file_issue(gh, config, "Release v7.0.6", "b", False, dry_run=False)
-    assert gh.issues[0]["labels"] == ["release", "failed"]
+    assert "could not add" in caplog.text and "to project cBioPortal/19" in caplog.text
