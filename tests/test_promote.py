@@ -175,6 +175,28 @@ def test_flip_skips_an_already_official_release(config):
     assert gh.updated_releases == []
 
 
+def test_flip_refuses_to_promote_behind_the_official_release(config):
+    # v7.0.4 official, so promoting v7.0.3 would drag Latest backwards.
+    gh = FakeGitHub(official("v7.0.4"))
+    with pytest.raises(promote.PromotionError, match="behind the current official"):
+        promote.flip(gh, config, "v7.0.3", dry_run=False)
+    assert gh.updated_releases == []
+
+
+def test_flip_refuses_before_a_dry_run_too(config):
+    gh = FakeGitHub(official("v7.0.4"))
+    with pytest.raises(promote.PromotionError):
+        promote.flip(gh, config, "v7.0.3", dry_run=True)
+
+
+def test_re_promoting_the_current_official_stays_a_no_op(config):
+    # The resume path: bump_downstream failed, so the same version is dispatched
+    # again. The guard must not turn that into a hard failure.
+    gh = FakeGitHub(official("v7.0.5"))
+    promote.flip(gh, config, "v7.0.5", dry_run=False)
+    assert gh.updated_releases == []
+
+
 def test_bump_downstream_rewrites_all_three_files(config):
     gh = FakeGitHub()
     promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)

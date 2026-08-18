@@ -31,21 +31,27 @@ def _assignee() -> str:
     return os.environ.get("RELEASE_ASSIGNEE", "").strip()
 
 
-def due(gh: GitHub, config: dict, now: datetime | None = None) -> list[dict]:
-    """Pre-releases old enough to be considered, and still ahead of the official one."""
-    now = now or datetime.now(UTC)
-    cutoff = now - timedelta(days=config["promotion"]["age_days"])
-    releases = gh.releases(config["repos"]["backend"])
+def _official_floor(releases: list[dict]) -> tuple[int, int, int] | None:
+    """Highest version already official. Promotion never goes at or below this.
 
-    # Promotion only ever moves forward. Once a version is official, every
-    # pre-release behind it is dead -- nobody will go back and promote v7.0.3
-    # after v7.0.5 shipped -- so those must not keep showing up as outstanding.
+    Promotion only ever moves forward: nobody will go back and promote v7.0.3
+    once v7.0.5 has shipped, and doing so by accident moves the "Latest" badge
+    backwards and downgrades the community artifacts.
+    """
     official = [
         ver.parse(release["tag_name"]) for release in releases
         if not release["draft"] and not release["prerelease"]
         and ver.is_release_tag(release["tag_name"])
     ]
-    floor = max(official) if official else None
+    return max(official) if official else None
+
+
+def due(gh: GitHub, config: dict, now: datetime | None = None) -> list[dict]:
+    """Pre-releases old enough to be considered, and still ahead of the official one."""
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(days=config["promotion"]["age_days"])
+    releases = gh.releases(config["repos"]["backend"])
+    floor = _official_floor(releases)
 
     out = []
     for release in releases:
@@ -113,6 +119,18 @@ def scan(gh: GitHub, config: dict, dry_run: bool) -> dict | None:
 
 
 def flip(gh: GitHub, config: dict, tag: str, dry_run: bool) -> None:
+    # Refuse before touching anything. `make_latest` would move the Latest badge
+    # backwards in both repos, and flip() cannot undo that -- it skips releases
+    # that are already official, so the pointer would have to be fixed by hand.
+    # Strictly below, not at or below: re-dispatching the version that is already
+    # official is how you resume after bump_downstream failed, and must stay a no-op.
+    floor = _official_floor(gh.releases(config["repos"]["backend"]))
+    if floor is not None and ver.parse(tag) < floor:
+        raise PromotionError(
+            f"{tag} is behind the current official release {ver.format(floor)}; "
+            f"promoting it would move Latest backwards and downgrade the chart"
+        )
+
     for key in ("frontend", "backend"):
         repo = config["repos"][key]
         release = gh.release_by_tag(repo, tag)
