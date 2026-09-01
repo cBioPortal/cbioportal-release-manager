@@ -105,11 +105,11 @@ on the team planning board.
 | Environment | `release-approval` | with required reviewers |
 | Labels | `release`, `succeeded`, `failed`, `promotion` | in this repo |
 
-The App must also be on the bypass list for branch protection on `cbioportal`
-`master`. Stages 5 and 8 commit the pom directly to `master` rather than opening a
-PR — those two commits are release logistics, and a PR would file them in the
-release notes this release then publishes. Without the bypass both stages fail on
-the push.
+The `cbioportal` `master` ruleset must give the App an **Always allow** bypass.
+Stages 5 and 8 commit the pom directly to `master` rather than opening a PR —
+those two commits are release logistics, and a PR would file them in the release
+notes this release then publishes. The ruleset bypass covers both its pull-request
+and required-status-check rules; App repository permissions alone do not.
 
 ## Maintaining config.toml
 

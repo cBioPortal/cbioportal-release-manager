@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 PR_REF = re.compile(r"\(#(\d+)\)")
 SECTION = re.compile(r"^##\s+(.*?)\s*$")
+COMPARE_URL = re.compile(
+    r"(https://github\.com/[^/\s]+/[^/\s]+/compare/)"
+    r"[A-Za-z0-9._-]+\.\.\.[A-Za-z0-9._-]+"
+)
 
 
 def link_prs(body: str, repo: str) -> str:
@@ -31,6 +35,23 @@ def link_prs(body: str, repo: str) -> str:
         lambda m: f"([{name}#{m.group(1)}](https://github.com/{repo}/pull/{m.group(1)}))",
         body,
     )
+
+
+def correct_commit_log_links(body: str, plan: dict) -> str:
+    """Set compare URLs in the full commit logs section to the planned release range."""
+    release_range = f"{plan['previous_version']}...{plan['version']}"
+    in_commit_logs = False
+    corrected: list[str] = []
+
+    for line in body.splitlines(keepends=True):
+        heading = SECTION.match(line)
+        if heading:
+            in_commit_logs = heading.group(1).lower().endswith("full commit logs")
+        if in_commit_logs:
+            line = COMPARE_URL.sub(lambda match: f"{match.group(1)}{release_range}", line)
+        corrected.append(line)
+
+    return "".join(corrected)
 
 
 def split_sections(body: str) -> list[tuple[str | None, list[str]]]:
@@ -84,22 +105,13 @@ def combine(backend_body: str, frontend_body: str, backend_titles: list[str],
 
 
 def tail(backend_body: str, plan: dict) -> list[str]:
-    """Keep the draft's trailing boilerplate, corrected to the real target version.
+    """Keep the draft's trailing boilerplate with the planned compare range."""
 
-    release-drafter always renders `$NEXT_PATCH_VERSION` in the compare links, so on
-    a minor or major release those links point at a version that will never exist.
-    """
-    from . import version as ver
-
-    guessed = ver.bump(plan["previous_version"], "patch")
     lines: list[str] = []
-    for heading, body in split_sections(backend_body):
+    for heading, body in split_sections(correct_commit_log_links(backend_body, plan)):
         if heading and ("commit log" in heading.lower() or "versioning" in heading.lower()):
             lines += [f"## {heading}", ""] + [b.rstrip() for b in body if b.strip()] + [""]
-    text = "\n".join(lines)
-    if guessed != plan["version"]:
-        text = text.replace(guessed, plan["version"])
-    return text.splitlines()
+    return "\n".join(lines).splitlines()
 
 
 def build(gh: GitHub, config: dict, plan: dict) -> dict[str, str]:
@@ -113,7 +125,7 @@ def build(gh: GitHub, config: dict, plan: dict) -> dict[str, str]:
     if not frontend_draft or not backend_draft:
         raise RuntimeError("a release-drafter draft is missing; run preflight first")
 
-    frontend_body = frontend_draft.get("body") or ""
+    frontend_body = correct_commit_log_links(frontend_draft.get("body") or "", plan)
     backend_body = backend_draft.get("body") or ""
 
     backend_titles = category_titles(gh, repos["backend"], branches["backend"])

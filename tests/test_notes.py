@@ -29,6 +29,37 @@ def test_link_prs_is_idempotent_on_already_linked_text():
     assert once == twice
 
 
+def test_correct_commit_log_links_uses_the_planned_range():
+    body = """## 🕵️‍♀️ Full commit logs
+
+- Backend: https://github.com/cBioPortal/cbioportal/compare/v7.0.5...v7.0.6
+- Frontend: https://github.com/cBioPortal/cbioportal-frontend/compare/v7.0.5...v7.0.6
+"""
+    plan = {"previous_version": "v7.0.5", "version": "v7.1.0"}
+
+    corrected = notes.correct_commit_log_links(body, plan)
+
+    assert corrected.count("compare/v7.0.5...v7.1.0") == 2
+    assert "v7.0.6" not in corrected
+
+
+def test_correct_commit_log_links_does_not_touch_other_sections(plan_v706):
+    body = """## Reference
+https://github.com/cBioPortal/cbioportal/compare/v1.0.0...v2.0.0
+
+## 🕵️‍♀️ Full commit logs
+https://github.com/cBioPortal/cbioportal/compare/v1.0.0...v2.0.0
+
+## After
+https://github.com/cBioPortal/cbioportal/compare/v1.0.0...v2.0.0
+"""
+
+    corrected = notes.correct_commit_log_links(body, plan_v706)
+
+    assert corrected.count("compare/v1.0.0...v2.0.0") == 2
+    assert corrected.count("compare/v7.0.5...v7.0.6") == 1
+
+
 def test_combine_merges_matching_categories(backend_draft, frontend_draft, plan_v706):
     combined = notes.combine(
         backend_draft, frontend_draft, BACKEND_TITLES, FRONTEND_TITLES, REPOS, plan_v706
@@ -97,3 +128,41 @@ def test_tail_corrects_compare_links_on_a_minor_release(backend_draft, plan_v706
 def test_tail_leaves_patch_releases_alone(backend_draft, plan_v706):
     tail = "\n".join(notes.tail(backend_draft, plan_v706))
     assert "compare/v7.0.5...v7.0.6" in tail
+
+
+def test_build_corrects_frontend_commit_log_links(
+    monkeypatch, backend_draft, frontend_draft, plan_v706
+):
+    frontend_draft += """\
+
+## 🕵️‍♀️ Full commit logs
+
+- Backend: https://github.com/cBioPortal/cbioportal/compare/v7.0.5...v7.0.6
+- Frontend: https://github.com/cBioPortal/cbioportal-frontend/compare/v7.0.5...v7.0.6
+"""
+    minor_plan = {**plan_v706, "version": "v7.1.0", "bump": "minor"}
+    drafts = {
+        REPOS["backend"]: {"body": backend_draft},
+        REPOS["frontend"]: {"body": frontend_draft},
+    }
+
+    class DraftGitHub:
+        def draft_release(self, repo):
+            return drafts[repo]
+
+    monkeypatch.setattr(
+        notes,
+        "category_titles",
+        lambda gh, repo, branch: (
+            BACKEND_TITLES if repo == REPOS["backend"] else FRONTEND_TITLES
+        ),
+    )
+
+    bodies = notes.build(
+        DraftGitHub(),
+        {"repos": REPOS, "branches": {"backend": "master", "frontend": "master"}},
+        minor_plan,
+    )
+
+    assert bodies["frontend"].count("compare/v7.0.5...v7.1.0") == 2
+    assert "v7.0.6" not in bodies["frontend"]
