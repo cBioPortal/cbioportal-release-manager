@@ -219,6 +219,11 @@ def test_bump_downstream_opens_one_pr_per_repo(config):
     gh = FakeGitHub()
     promote.bump_downstream(gh, config, "v7.0.6", dry_run=False)
     assert len(gh.pulls) == 2
+    titles = {pull["repo"]: pull["title"] for pull in gh.pulls}
+    assert titles == {
+        config["repos"]["compose"]: "Update cbioportal to 7.0.6",
+        config["repos"]["helm"]: "Update cbioportal helm chart app version to 7.0.6",
+    }
 
 
 def test_bump_downstream_is_a_noop_when_already_current(config):

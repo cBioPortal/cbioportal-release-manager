@@ -207,8 +207,13 @@ def bump_downstream(gh: GitHub, config: dict, tag: str, dry_run: bool) -> list[d
         for path, content in changes:
             gh.put_file(repo, path, content, f"Update cbioportal to {plain}", branch)
 
+        title = (
+            f"Update cbioportal helm chart app version to {plain}"
+            if repo == config["repos"]["helm"]
+            else f"Update cbioportal to {plain}"
+        )
         pull = gh.find_pull(repo, branch, base) or gh.create_pull(
-            repo, branch, base, f"Update cbioportal to {plain}",
+            repo, branch, base, title,
             f"`{tag}` is now the official cBioPortal release.\n\n"
             f"Opened by cbioportal-release-manager.",
         )
