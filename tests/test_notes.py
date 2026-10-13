@@ -147,6 +147,9 @@ def test_build_corrects_frontend_commit_log_links(
     }
 
     class DraftGitHub:
+        def release_by_tag(self, repo, tag):
+            return None
+
         def draft_release(self, repo):
             return drafts[repo]
 

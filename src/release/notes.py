@@ -6,8 +6,9 @@ unlinked; the rewrite here is length-agnostic.
 
 Notes are generated on demand rather than pinned at stage 2 and carried forward.
 Stage 2 is a preview and a validation gate; stages 3 and 6 regenerate from the live
-drafts, so if backend master moves mid-release the notes still describe what is
-actually tagged.
+backend draft, so if backend master moves mid-release the notes still describe what
+is actually tagged. The frontend side comes from the published frontend release once
+stage 3 has cut it, as the manual process did.
 """
 
 from __future__ import annotations
@@ -119,13 +120,19 @@ def build(gh: GitHub, config: dict, plan: dict) -> dict[str, str]:
     repos = config["repos"]
     branches = config["branches"]
 
-    logger.info("reading both release-drafter drafts")
-    frontend_draft = gh.draft_release(repos["frontend"])
+    # Once stage 3 publishes the frontend release, release-drafter moves the frontend
+    # draft on to the next version, so from then on the release is the source.
+    frontend_source = gh.release_by_tag(repos["frontend"], plan["version"])
+    if frontend_source:
+        logger.info("reading the published frontend release and the backend draft")
+    else:
+        logger.info("reading both release-drafter drafts")
+        frontend_source = gh.draft_release(repos["frontend"])
     backend_draft = gh.draft_release(repos["backend"])
-    if not frontend_draft or not backend_draft:
+    if not frontend_source or not backend_draft:
         raise RuntimeError("a release-drafter draft is missing; run preflight first")
 
-    frontend_body = correct_commit_log_links(frontend_draft.get("body") or "", plan)
+    frontend_body = correct_commit_log_links(frontend_source.get("body") or "", plan)
     backend_body = backend_draft.get("body") or ""
 
     backend_titles = category_titles(gh, repos["backend"], branches["backend"])
