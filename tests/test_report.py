@@ -166,3 +166,25 @@ def test_a_broken_board_does_not_fail_the_hand_off(happy, config, caplog):
     report.file_issue(gh, config, "Release v7.0.6", "body", True, dry_run=False)
     assert len(gh.issues) == 1
     assert "could not add" in caplog.text and "to project cBioPortal/19" in caplog.text
+
+
+def test_a_failed_plan_files_a_did_not_start_issue(config, monkeypatch, tmp_path):
+    # Stage 1 failing means no plan.json; the hand-off must still raise the alarm.
+    from release import cli
+
+    monkeypatch.setenv("RELEASE_ASSIGNEE", "zainasir")
+    gh = FakeGitHub()
+    monkeypatch.setattr(cli, "_gh", lambda: gh)
+    results = {**dict.fromkeys(ALL_GREEN, "skipped"), "plan": "failure"}
+    args = cli.build_parser().parse_args(
+        ["report", "--plan", str(tmp_path / "missing.json"), "--run-url", "https://run"]
+        + [arg for k, v in results.items() for arg in ("--result", f"{k}={v}")]
+    )
+
+    assert cli.cmd_report(args, config) == 1
+    [issue] = gh.issues
+    assert issue["title"].startswith("Release did not start (")
+    assert "**failure**" in issue["body"] and "https://run" in issue["body"]
+    assert issue["labels"] == ["release", "failed"]
+    assert issue["assignees"] == [{"login": "zainasir"}]
+    assert gh.project_items == ["I_issue"]

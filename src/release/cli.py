@@ -25,7 +25,7 @@ def _gh() -> GitHub:
 
 def cmd_plan(args, config) -> int:
     with logs.group("preflight"):
-        built = plan.build(_gh(), config, bump=args.bump)
+        built = plan.build(_gh(), config, bump=args.bump, dry_run=args.dry_run)
     plan.write(built, args.plan)
     summary = plan.render(built)
     print(summary)
@@ -145,11 +145,17 @@ def cmd_bump_snapshot(args, config) -> int:
 
 def cmd_report(args, config) -> int:
     gh = _gh()
-    current = plan.read(args.plan)
     results = dict(item.split("=", 1) for item in args.result)
     run_url = args.run_url or os.environ.get("RUN_URL", "")
     with logs.group("hand off"):
-        title, body, succeeded = report.build(gh, config, current, results, run_url)
+        # Without a successful stage 1 there is no plan to report on.
+        if results.get("plan", "success") != "success":
+            title, body = report.not_started(results, run_url)
+            succeeded = False
+        else:
+            title, body, succeeded = report.build(
+                gh, config, plan.read(args.plan), results, run_url
+            )
         report.file_issue(gh, config, title, body, succeeded, args.dry_run)
     print(body)
     report.write_summary(f"# {title}\n\n{body}")
@@ -211,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
                                metavar="STAGE=RESULT")
     report_parser.add_argument("--run-url", default="")
 
-    add("promote-scan", cmd_promote_scan, "nightly: flag pre-releases due for promotion",
+    add("promote-scan", cmd_promote_scan, "weekly: flag pre-releases due for promotion",
         needs_plan=False)
     add("promote", cmd_promote, "flip a pre-release to official and bump downstream",
         needs_plan=False).add_argument("--version", required=True)

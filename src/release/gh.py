@@ -211,6 +211,9 @@ class GitHub:
     def update_issue(self, repo: str, number: int, **fields) -> dict:
         return self.patch(f"/repos/{repo}/issues/{number}", fields)
 
+    def add_labels(self, repo: str, number: int, labels: list[str]) -> list[dict]:
+        return self.post(f"/repos/{repo}/issues/{number}/labels", {"labels": labels})
+
     def comment(self, repo: str, number: int, body: str) -> dict:
         return self.post(f"/repos/{repo}/issues/{number}/comments", {"body": body})
 

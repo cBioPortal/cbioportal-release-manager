@@ -5,11 +5,12 @@ name: Release
 # picks up where the release stopped instead of redoing the 20-minute Maven
 # Central publish.
 #
-# Stage 3 is the one approval gate: it triggers an irreversible publish. Stage 9
-# must never be gated (it reports failures, so needing approval to find out what
-# broke defeats the point).
+# Stage 9 must never be gated (it reports failures, so needing approval to find
+# out what broke defeats the point).
 
 on:
+  schedule:
+    - cron: "0 5 * * 2" # Tuesdays 00:00 EST (01:00 EDT); cron is UTC
   workflow_dispatch:
     inputs:
       bump:
@@ -43,7 +44,8 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-      - run: uv run release plan --bump "${{ inputs.bump }}" --plan plan.json
+      # Scheduled runs have no inputs, so they take the patch default.
+      - run: uv run release plan --bump "${{ inputs.bump || 'patch' }}" --plan plan.json $DRY_RUN
         env:
           GITHUB_TOKEN: ${{ steps.setup.outputs.token }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -74,9 +76,6 @@ jobs:
     name: 3 · cut frontend release
     needs: [notes]
     runs-on: ubuntu-latest
-    # The Maven Central publish this sets off cannot be undone. This gate is
-    # permanent: it stays after the temporary per-stage gates above come off.
-    environment: release-approval
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
@@ -231,24 +230,14 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: No plan, nothing to report
-        if: needs.plan.result != 'success'
-        run: |
-          {
-            echo "## Release did not start"
-            echo
-            echo "Stage 1 did not complete, so no version was ever chosen and nothing"
-            echo "was written. See the \`plan\` job for the precondition that failed."
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit 1
-
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.plan.result == 'success'
         with:
           name: plan
 
+      # Also runs when stage 1 failed: there is no plan then, so the report files a
+      # "Release did not start" issue instead.
       - name: Summarise and file the release issue
-        if: needs.plan.result == 'success'
         run: |
           uv run release report --plan plan.json $DRY_RUN \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \

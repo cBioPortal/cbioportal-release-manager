@@ -1,7 +1,8 @@
 """Stage 1: pin, decide the version, and refuse to start on a bad footing.
 
-Nothing here writes to GitHub. Its whole job is to turn "master looks ready" into
-a concrete, recorded intention -- and to fail before anything irreversible happens.
+Its whole job is to turn "master looks ready" into a concrete, recorded intention --
+and to fail before anything irreversible happens. The only writes are labelling
+unlabelled PRs with the catch-all label and re-running release-drafter.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -77,6 +79,41 @@ def count_prs(body: str) -> int:
     return len([line for line in body.splitlines() if PR_BULLET.match(line)])
 
 
+def file_uncategorised(gh: GitHub, config: dict, repo: str, branch: str,
+                       titles: list[str], loose: list[int], dry_run: bool,
+                       sleep=time.sleep) -> str | None:
+    """Label loose PRs with the catch-all and wait for the draft to re-file them.
+
+    Returns the re-rendered draft body, or None on a dry run. release-drafter is
+    dispatched rather than left to the `labeled` event: for PRs from forks that run
+    gets a read-only token, cannot see the draft, and fails.
+    """
+    label = config["changelog"]["catch_all_label"]
+    workflow = config["changelog"]["drafter_workflow"]
+    listed = ", ".join(f"#{n}" for n in loose)
+    if dry_run:
+        logger.info("[dry-run] %s: would label %s %s and re-run %s", repo, listed, label,
+                    workflow)
+        return None
+
+    for number in loose:
+        gh.add_labels(repo, number, [label])
+    logger.info("%s: labelled %s %s; re-running %s", repo, listed, label, workflow)
+    gh.dispatch_workflow(repo, workflow, branch, {})
+
+    attempts = config["timeouts"]["drafter_attempts"]
+    interval = config["timeouts"]["drafter_interval_seconds"]
+    body = ""
+    for attempt in range(1, attempts + 1):
+        sleep(interval)
+        body = (gh.draft_release(repo) or {}).get("body") or ""
+        if not uncategorised_prs(body, titles):
+            logger.info("%s: draft re-rendered", repo)
+            return body
+        logger.info("%s: draft not re-rendered yet (%d/%d)", repo, attempt, attempts)
+    return body
+
+
 def verify_checks(gh: GitHub, repo: str, sha: str, required: list[str],
                   pre: Preflight) -> None:
     if not required:
@@ -95,7 +132,8 @@ def verify_checks(gh: GitHub, repo: str, sha: str, required: list[str],
             pre.check(False, f"{repo}@{sha[:8]}: required check {name!r} is {state}")
 
 
-def build(gh: GitHub, config: dict, bump: str = "patch") -> dict:
+def build(gh: GitHub, config: dict, bump: str = "patch", dry_run: bool = False,
+          sleep=time.sleep) -> dict:
     repos = config["repos"]
     branches = config["branches"]
     pre = Preflight()
@@ -153,14 +191,28 @@ def build(gh: GitHub, config: dict, bump: str = "patch") -> dict:
         if not draft:
             raise PreflightError(f"{repo}: no release-drafter draft found")
         body = draft.get("body") or ""
-        loose = uncategorised_prs(body, category_titles(gh, repo, branches[key]))
+        titles = category_titles(gh, repo, branches[key])
+        loose = uncategorised_prs(body, titles)
         if loose:
             listed = ", ".join(f"#{n}" for n in loose)
-            pre.check(
-                False,
-                f"{repo}: {len(loose)} PR(s) have no changelog label and would be "
-                f"dropped from the notes: {listed}",
-            )
+            label = config["changelog"]["catch_all_label"]
+            refiled = file_uncategorised(gh, config, repo, branches[key], titles, loose,
+                                         dry_run, sleep)
+            if refiled is None:
+                pre.warn(f"{repo}: {len(loose)} unlabelled PR(s) would be filed under "
+                         f"{label}: {listed}")
+            else:
+                body = refiled
+                still = uncategorised_prs(body, titles)
+                pre.check(
+                    not still,
+                    f"{repo}: {len(still)} PR(s) are still uncategorised after labelling "
+                    f"them {label}: {', '.join(f'#{n}' for n in still)}",
+                )
+                if not still:
+                    pre.warn(f"{repo}: filed {len(loose)} unlabelled PR(s) under {label}: "
+                             f"{listed}")
+                loose = still
         count = count_prs(body)
         drafts[key] = {"id": draft["id"], "pr_count": count}
         if loose:

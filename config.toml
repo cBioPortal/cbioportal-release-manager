@@ -15,6 +15,13 @@ backend = "master"
 frontend = []
 backend = []
 
+[changelog]
+# Stage 1 files unlabelled PRs under this label, then re-runs this workflow on the
+# branch so the draft picks it up. Both repos need the label as a release-drafter
+# category and `workflow_dispatch` on the workflow.
+catch_all_label = "cl-misc"
+drafter_workflow = "release-management.yml"
+
 [maven]
 base = "https://repo1.maven.org/maven2"
 group_path = "io/github/cbioportal"
@@ -37,6 +44,8 @@ maven_attempts = 30
 maven_interval_seconds = 60
 docker_attempts = 30
 docker_interval_seconds = 60
+drafter_attempts = 10
+drafter_interval_seconds = 30
 
 [project]
 # The team planning board. Assigning the release issue is not enough on its own:

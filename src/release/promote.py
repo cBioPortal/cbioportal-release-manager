@@ -1,6 +1,6 @@
 """Promotion: pre-release -> official, and the community artifacts that follow.
 
-Two separate things on purpose. `scan` runs nightly and only ever opens an issue --
+Two separate things on purpose. `scan` runs weekly and only ever opens an issue --
 "we tested it in production for a month and saw no major issues" is a judgement call,
 not a cron job. `promote` is dispatched by hand once that call is made.
 

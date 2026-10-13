@@ -83,3 +83,61 @@ def test_roundtrip(tmp_path, plan_v706):
     path = tmp_path / "plan.json"
     plan.write(plan_v706, path)
     assert plan.read(path) == plan_v706
+
+
+LOOSE = "## Changes\n- Unlabelled @dev (#7)\n- Also unlabelled @dev (#8)\n"
+REFILED = "## 🗂 Miscellaneous\n- Unlabelled @dev (#7)\n- Also unlabelled @dev (#8)\n"
+TITLES = ["🗂 Miscellaneous"]
+
+
+class DrafterStub:
+    """Serves one draft body per poll and records the labels and dispatches."""
+
+    def __init__(self, *bodies):
+        self.bodies = list(bodies)
+        self.labels = []
+        self.dispatches = []
+
+    def add_labels(self, repo, number, labels):
+        self.labels.append((repo, number, labels))
+
+    def dispatch_workflow(self, repo, workflow, ref, inputs):
+        self.dispatches.append((repo, workflow, ref))
+
+    def draft_release(self, repo):
+        return {"body": self.bodies.pop(0) if len(self.bodies) > 1 else self.bodies[0]}
+
+
+def file_uncategorised(gh, config, dry_run=False):
+    return plan.file_uncategorised(gh, config, "o/backend", "master", TITLES, [7, 8],
+                                   dry_run, sleep=lambda _: None)
+
+
+def test_file_uncategorised_labels_dispatches_and_returns_the_refiled_draft(config):
+    gh = DrafterStub(REFILED)
+    assert file_uncategorised(gh, config) == REFILED
+    assert gh.labels == [("o/backend", 7, ["cl-misc"]), ("o/backend", 8, ["cl-misc"])]
+    assert gh.dispatches == [("o/backend", "release-management.yml", "master")]
+
+
+def test_file_uncategorised_polls_until_the_draft_re_renders(config):
+    gh = DrafterStub(LOOSE, LOOSE, REFILED)
+    assert file_uncategorised(gh, config) == REFILED
+    assert gh.bodies == [REFILED]
+    assert len(gh.dispatches) == 1
+
+
+def test_file_uncategorised_gives_up_with_the_still_loose_draft(config):
+    gh = DrafterStub(LOOSE)
+    polls = []
+    result = plan.file_uncategorised(gh, config, "o/backend", "master", TITLES, [7, 8],
+                                     False, sleep=polls.append)
+    assert plan.uncategorised_prs(result, TITLES) == [7, 8]
+    assert len(polls) == config["timeouts"]["drafter_attempts"]
+
+
+def test_file_uncategorised_writes_nothing_on_a_dry_run(config):
+    gh = DrafterStub(LOOSE)
+    assert file_uncategorised(gh, config, dry_run=True) is None
+    assert gh.labels == []
+    assert gh.dispatches == []

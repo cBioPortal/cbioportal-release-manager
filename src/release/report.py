@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import UTC, datetime
 
 from . import board, publish
 from .gh import GitHub
@@ -145,6 +146,22 @@ def failure_body(config: dict, plan: dict, state: dict, results: dict, run_url: 
     lines += _stage_table(results)
     lines += ["", "**Do not deploy this version until the release completes.**"]
     return "\n".join(lines)
+
+
+def not_started(results: dict[str, str], run_url: str) -> tuple[str, str]:
+    """Return (title, body) for a run that stopped at stage 1, before a version existed.
+
+    Titled by date rather than version: no version was ever chosen.
+    """
+    title = f"Release did not start ({datetime.now(UTC).date()})"
+    body = "\n".join([
+        (f"Stage 1 (`plan`) finished with **{results.get('plan', 'unknown')}**, so no "
+         "version was chosen and nothing was released."),
+        "",
+        (f"[Workflow run]({run_url}): the `plan` job's log names the precondition that "
+         "failed. Fix it, then re-run the workflow."),
+    ])
+    return title, body
 
 
 def build(gh: GitHub, config: dict, plan: dict, results: dict[str, str],
